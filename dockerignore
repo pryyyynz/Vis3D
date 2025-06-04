@@ -1,0 +1,34 @@
+# Docker ignore file for Vis3D
+
+# Python compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# Git files
+.git
+.gitignore
+
+# Pre-downloaded model files (will be downloaded during build if needed)
+dpt_hybrid-midas-501f0c75.pt
+
+# Development files
+*.log
+*.tmp
+
+# Testing
+.pytest_cache/
+.coverage
+
+# Editor files
+.vscode/
+.idea/
+
+# Output directories
+vis3d_output/
