@@ -290,13 +290,15 @@ class MidasDepthEstimation:
 
         return json_path
 
-    def generate_3d_data_from_memory(self, image_data):
+    def generate_3d_data_from_memory(self, image_data, sample_rate=4, depth_threshold=0.0):
         """
         Generate 3D point cloud data suitable for Three.js rendering directly 
         from image data without saving files.
 
         Args:
             image_data: Image as numpy array (BGR format from OpenCV)
+            sample_rate: Sampling rate for the point cloud (higher = fewer points)
+            depth_threshold: Filter out points with depth values below this threshold (0.0-1.0)
 
         Returns:
             Dict containing the 3D point cloud data and depth map visualization
@@ -312,9 +314,34 @@ class MidasDepthEstimation:
         colors = []
 
         # Sample points from the depth map (downscale for better performance)
-        sample_rate = 4  # Adjust based on performance needs
+        # Ensure sample_rate is at least 4 for reasonable performance
+        sample_rate = max(4, sample_rate)
+        
+        # Convert threshold from 0-1 range to the actual depth map range
+        min_depth = np.min(depth_map)
+        max_depth = np.max(depth_map)
+        depth_range = max_depth - min_depth
+        actual_threshold = min_depth + (depth_threshold * depth_range)
+        
+        # Optional: Apply adaptive sampling based on local depth variance
+        # This creates denser sampling in detailed areas and sparser in flat areas
+        adaptive_sampling = False
+        if adaptive_sampling:
+            from scipy.ndimage import gaussian_filter
+            # Calculate gradient magnitude of depth map
+            dx = cv2.Sobel(depth_map, cv2.CV_64F, 1, 0, ksize=3)
+            dy = cv2.Sobel(depth_map, cv2.CV_64F, 0, 1, ksize=3)
+            gradient_mag = np.sqrt(dx**2 + dy**2)
+            gradient_mag = gaussian_filter(gradient_mag, sigma=2)
+            # Normalize
+            gradient_mag = (gradient_mag - np.min(gradient_mag)) / (np.max(gradient_mag) - np.min(gradient_mag))
+        
         for y in range(0, height, sample_rate):
             for x in range(0, width, sample_rate):
+                # Skip points below the depth threshold (filter out distant points)
+                if depth_map[y, x] < actual_threshold:
+                    continue
+                
                 # Create normalized coordinates
                 norm_x = (x / width) - 0.5
                 # Flip Y for 3D coordinate system
