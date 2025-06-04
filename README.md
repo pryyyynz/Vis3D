@@ -12,6 +12,9 @@ A web application that converts images to interactive 3D point clouds using MiDa
 - Download generated 3D models in PLY format
 - Visualization controls (axes, background color, camera reset)
 
+## Live Application
+[Check out the tool here](https://vis3d-production.up.railway.app/)
+
 ## Getting Started
 
 1. Install dependencies:
