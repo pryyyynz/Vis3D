@@ -5,8 +5,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>VIS3D - 3D from Images</title>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.152.0/build/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.152.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.137.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.137.0/examples/js/controls/OrbitControls.js"></script>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -95,9 +95,52 @@
 
         <div class="upload-container">
             <h2>Upload Image</h2>
-            <input type="file" id="imageInput" accept="image/*">
-            <button id="uploadButton">Process Image</button>
+            <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
+                <div>
+                    <input type="file" id="imageInput" accept="image/*">
+                </div>
+                <div>
+                    <label for="sampleRate">Point Density:</label>
+                    <select id="sampleRate" title="Higher values = fewer points but faster processing">
+                        <option value="4">High (Slow)</option>
+                        <option value="8" selected>Medium</option>
+                        <option value="12">Low (Fast)</option>
+                        <option value="16">Very Low (Fastest)</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="detailLevel">Detail Level:</label>
+                    <select id="detailLevel" title="Controls how the model emphasizes details">
+                        <option value="high">High Detail</option>
+                        <option value="balanced" selected>Balanced</option>
+                        <option value="low">Low Detail</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="pointSize">Point Size:</label>
+                    <input type="range" id="pointSize" min="0.001" max="0.05" step="0.001" value="0.01" 
+                        title="Adjust the size of the 3D points">
+                    <span id="pointSizeValue">0.01</span>
+                </div>
+                <div>
+                    <label for="zScale">Depth Scale:</label>
+                    <input type="range" id="zScale" min="0.1" max="3.0" step="0.1" value="1.0" 
+                        title="Adjust the depth intensity">
+                    <span id="zScaleValue">1.0</span>
+                </div>
+                <div>
+                    <label for="depthThreshold">Depth Threshold:</label>
+                    <input type="range" id="depthThreshold" min="0" max="0.5" step="0.01" value="0.0" 
+                        title="Filter out distant points above this threshold (0 = no filtering)">
+                    <span id="depthThresholdValue">0.0</span>
+                </div>
+                <div>
+                    <button id="uploadButton">Process Image</button>
+                    <button id="testApiButton" style="margin-left: 10px; background: #27ae60;">Test API</button>
+                </div>
+            </div>
             <div class="progress" id="progressIndicator">Processing... Please wait.</div>
+            <div id="apiTestResult" style="margin-top: 10px; display: none;"></div>
         </div>
 
         <div class="results-container">
@@ -115,8 +158,29 @@
         <div class="result-item">
             <h2>3D Visualization</h2>
             <div id="renderCanvas"></div>
-            <div id="renderControls" style="display:none">
-                <button id="resetViewBtn">Reset View</button>
+            <div id="renderControls" style="display:none; margin-top: 10px;">
+                <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
+                    <button id="resetViewBtn">Reset View</button>
+                    <button id="toggleAxesBtn">Toggle Axes</button>
+                    <button id="toggleAttenuationBtn">Disable Size Attenuation</button>
+                    <button id="reapplyFiltersBtn">Reapply Filters</button>
+                    <button id="downloadModelBtn">Download Model</button>
+                    <div>
+                        <label>Background: </label>
+                        <select id="bgColor">
+                            <option value="dark">Dark</option>
+                            <option value="light">Light</option>
+                            <option value="blue">Blue</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label>Point Style: </label>
+                        <select id="pointStyle">
+                            <option value="round">Round</option>
+                            <option value="square">Square</option>
+                        </select>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -125,16 +189,20 @@
         // Global variables
         let scene, camera, renderer, controls, pointCloud;
         let isSceneInitialized = false;
+        let originalPointsData = null; // Store original point cloud data for filtering
+        let isPointSizeAttenuation = true; // Default to size attenuation on
 
         // Initialize Three.js scene
         function initScene () {
-            // Create scene
-            scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x111111);
-
-            // Create camera
-            camera = new THREE.PerspectiveCamera(75, window.innerWidth / 400, 0.1, 1000);
-            camera.position.z = 2;
+            try {
+                console.log("Initializing 3D scene...");
+                // Create scene
+                scene = new THREE.Scene();
+                scene.background = new THREE.Color(0x111111);
+    
+                // Create camera
+                camera = new THREE.PerspectiveCamera(75, window.innerWidth / 400, 0.1, 1000);
+                camera.position.z = 2;
 
             // Create renderer
             renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -168,6 +236,11 @@
             window.addEventListener('resize', onWindowResize);
 
             isSceneInitialized = true;
+            console.log("Three.js scene initialized successfully");
+            } catch (error) {
+                console.error("Error initializing Three.js scene:", error);
+                alert("Error initializing 3D viewer: " + error.message);
+            }
         }
 
         // Handle window resize
@@ -181,34 +254,93 @@
 
         // Create point cloud from 3D data
         function createPointCloud (data) {
-            // Clear previous point cloud
-            if (pointCloud) {
-                scene.remove(pointCloud);
+            try {
+                console.log("Creating point cloud with data:", data);
+                
+                // Store original point data for later manipulation
+                originalPointsData = {
+                    vertices: [...data.vertices], // Create a copy
+                    colors: [...data.colors]      // Create a copy
+                };
+                
+                // Clear previous point cloud
+                if (pointCloud) {
+                    scene.remove(pointCloud);
+                }
+    
+                // Create geometry
+                const geometry = new THREE.BufferGeometry();
+    
+                // Create position attribute
+                const vertices = new Float32Array(data.vertices);
+                console.log("Vertices array length:", vertices.length);
+                geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+    
+                // Create color attribute
+                const colors = new Float32Array(data.colors);
+                console.log("Colors array length:", colors.length);
+                geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+                
+                // Get point size from slider
+                const pointSizeValue = parseFloat(document.getElementById('pointSize').value);
+                document.getElementById('pointSizeValue').textContent = pointSizeValue.toFixed(3);
+                
+                // Apply Z-scale if needed
+                const zScale = parseFloat(document.getElementById('zScale').value);
+                if (zScale !== 1.0) {
+                    const positions = geometry.attributes.position.array;
+                    for (let i = 2; i < positions.length; i += 3) {
+                        positions[i] *= zScale;
+                    }
+                    geometry.attributes.position.needsUpdate = true;
+                }
+                
+                // Create material with improved visuals
+                const material = new THREE.PointsMaterial({
+                    size: pointSizeValue,                    // Use value from slider
+                    sizeAttenuation: isPointSizeAttenuation, // Use global setting
+                    vertexColors: true,                      // Use per-point colors
+                    alphaTest: 0.1,                          // Discard nearly transparent pixels
+                    transparent: true,                       // Enable transparency
+                    depthTest: true,                         // Properly render depth
+                    blending: THREE.NormalBlending           // Standard blending mode
+                });
+                
+                // Create round points if selected
+                if (document.getElementById('pointStyle').value === 'round') {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = 64;
+                    canvas.height = 64;
+                    const ctx = canvas.getContext('2d');
+                    
+                    // Draw circle
+                    ctx.beginPath();
+                    ctx.arc(32, 32, 30, 0, Math.PI * 2);
+                    ctx.closePath();
+                    ctx.fillStyle = 'white';
+                    ctx.fill();
+                    
+                    // Create texture from canvas
+                    const texture = new THREE.CanvasTexture(canvas);
+                    material.map = texture;
+                }
+    
+                // Create point cloud
+                pointCloud = new THREE.Points(geometry, material);
+                scene.add(pointCloud);
+    
+                // Reset controls
+                if (controls && typeof controls.reset === 'function') {
+                    controls.reset();
+                } else {
+                    console.warn("Controls not initialized or reset method not available");
+                }
+                
+                console.log("Point cloud created successfully with point size:", pointSizeValue);
+            } catch (error) {
+                console.error("Error creating point cloud:", error);
+                alert("Error creating 3D visualization: " + error.message);
             }
-
-            // Create geometry
-            const geometry = new THREE.BufferGeometry();
-
-            // Create position attribute
-            const vertices = new Float32Array(data.vertices);
-            geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
-
-            // Create color attribute
-            const colors = new Float32Array(data.colors);
-            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-
-            // Create material
-            const material = new THREE.PointsMaterial({
-                size: 0.005,
-                vertexColors: true
-            });
-
-            // Create point cloud
-            pointCloud = new THREE.Points(geometry, material);
-            scene.add(pointCloud);
-
-            // Reset controls
-            controls.reset();
         }
 
         // Handle file upload
@@ -222,22 +354,44 @@
             const file = fileInput.files[0];
             const formData = new FormData();
             formData.append('file', file);
-
+            
+            // Get processing parameters
+            const sampleRate = document.getElementById('sampleRate').value;
+            formData.append('sample_rate', sampleRate);
+            
+            // Get detail level
+            const detailLevel = document.getElementById('detailLevel').value;
+            formData.append('detail_level', detailLevel);
+            
+            // Get depth threshold
+            const depthThreshold = document.getElementById('depthThreshold').value;
+            formData.append('depth_threshold', depthThreshold);
+            
+            console.log(`Processing with: sample_rate=${sampleRate}, detail_level=${detailLevel}, depth_threshold=${depthThreshold}`);
+            
             // Show loading indicator
             document.getElementById('progressIndicator').style.display = 'block';
 
             try {
+                console.log(`Sending image to server with sample_rate=${sampleRate}...`);
                 // Process the image in a single request
                 const response = await fetch('/convert_to_3d/', {
                     method: 'POST',
                     body: formData
                 });
 
+                console.log('Server response status:', response.status);
+                console.log('Server response status text:', response.statusText);
+                
                 if (!response.ok) {
-                    throw new Error(`Processing failed: ${ response.statusText }`);
+                    const errorText = await response.text();
+                    console.error('Error response body:', errorText);
+                    throw new Error(`Processing failed: ${response.statusText}. Details: ${errorText}`);
                 }
-
+                
+                console.log('Parsing JSON response...');
                 const data = await response.json();
+                console.log('Received data structure:', Object.keys(data));
 
                 // Display results
                 // Show original image
@@ -256,8 +410,14 @@
                 }
 
                 // Create point cloud and show controls
-                createPointCloud(data.threejs_data);
-                document.getElementById('renderControls').style.display = 'block';
+                if (data.threejs_data && data.threejs_data.vertices && data.threejs_data.colors) {
+                    console.log('Creating point cloud with vertices:', data.threejs_data.vertices.length / 3);
+                    createPointCloud(data.threejs_data);
+                    document.getElementById('renderControls').style.display = 'block';
+                } else {
+                    console.error('Missing or invalid threejs_data in response:', data.threejs_data);
+                    alert('Error: Invalid 3D data received from the server');
+                }
 
             } catch (error) {
                 console.error('Error:', error);
@@ -268,12 +428,285 @@
             }
         });
 
+        // Test API button
+        document.getElementById('testApiButton').addEventListener('click', async () => {
+            try {
+                console.log('Testing API connection...');
+                const response = await fetch('/api/test');
+                const data = await response.json();
+                
+                const resultElem = document.getElementById('apiTestResult');
+                resultElem.style.display = 'block';
+                resultElem.innerHTML = `<div style="color: green; font-weight: bold;">API Test Successful: ${data.message}</div>`;
+                console.log('API test result:', data);
+            } catch (error) {
+                console.error('API Test Error:', error);
+                const resultElem = document.getElementById('apiTestResult');
+                resultElem.style.display = 'block';
+                resultElem.innerHTML = `<div style="color: red; font-weight: bold;">API Test Failed: ${error.message}</div>`;
+            }
+        });
+        
         // Reset view button
         document.getElementById('resetViewBtn').addEventListener('click', () => {
             if (controls) {
                 controls.reset();
             }
         });
+
+        // Point size slider update handler
+        document.getElementById('pointSize').addEventListener('input', function() {
+            const value = parseFloat(this.value);
+            document.getElementById('pointSizeValue').textContent = value.toFixed(3);
+            
+            // Update point cloud if it exists
+            if (pointCloud && pointCloud.material) {
+                pointCloud.material.size = value;
+                pointCloud.material.needsUpdate = true;
+                renderer.render(scene, camera);
+            }
+        });
+
+        // Toggle axes visibility
+        let axesHelper;
+        document.getElementById('toggleAxesBtn').addEventListener('click', () => {
+            if (axesHelper) {
+                scene.remove(axesHelper);
+                axesHelper = null;
+                console.log("Axes hidden");
+            } else {
+                // Create and add axes helper
+                axesHelper = new THREE.AxesHelper(5);
+                scene.add(axesHelper);
+                console.log("Axes shown");
+            }
+        });
+
+        // Background color change
+        document.getElementById('bgColor').addEventListener('change', function() {
+            const color = this.value;
+            switch (color) {
+                case 'dark':
+                    scene.background.set(0x111111);
+                    break;
+                case 'light':
+                    scene.background.set(0xffffff);
+                    break;
+                case 'blue':
+                    scene.background.set(0x0000ff);
+                    break;
+                default:
+                    scene.background.set(0x111111);
+            }
+            console.log("Background color set to:", color);
+        });
+        
+        // Z-Scale slider update handler
+        document.getElementById('zScale').addEventListener('input', function() {
+            const value = parseFloat(this.value);
+            document.getElementById('zScaleValue').textContent = value.toFixed(1);
+            
+            // Update point cloud if it exists
+            if (pointCloud && originalPointsData) {
+                const geometry = pointCloud.geometry;
+                const positions = geometry.attributes.position.array;
+                
+                // Apply z-scale to all points
+                for (let i = 2; i < positions.length; i += 3) {
+                    // Get original z value and apply scale
+                    const originalZ = originalPointsData.vertices[i];
+                    positions[i] = originalZ * value;
+                }
+                
+                geometry.attributes.position.needsUpdate = true;
+                renderer.render(scene, camera);
+            }
+        });
+        
+        // Depth threshold slider update handler
+        document.getElementById('depthThreshold').addEventListener('input', function() {
+            const value = parseFloat(this.value);
+            document.getElementById('depthThresholdValue').textContent = value.toFixed(2);
+        });
+        
+        // Point style change handler
+        document.getElementById('pointStyle').addEventListener('change', function() {
+            if (!pointCloud || !pointCloud.material) return;
+            
+            if (this.value === 'square') {
+                pointCloud.material.map = null;
+            } else { // round
+                // Create a round particle texture
+                const canvas = document.createElement('canvas');
+                canvas.width = 64;
+                canvas.height = 64;
+                const ctx = canvas.getContext('2d');
+                
+                // Draw circle
+                ctx.beginPath();
+                ctx.arc(32, 32, 30, 0, Math.PI * 2);
+                ctx.closePath();
+                ctx.fillStyle = 'white';
+                ctx.fill();
+                
+                // Create texture from canvas
+                const texture = new THREE.CanvasTexture(canvas);
+                pointCloud.material.map = texture;
+            }
+            
+            pointCloud.material.needsUpdate = true;
+            renderer.render(scene, camera);
+        });
+
+        // Toggle size attenuation
+        document.getElementById('toggleAttenuationBtn').addEventListener('click', function() {
+            if (!pointCloud || !pointCloud.material) return;
+            
+            // Toggle the attenuation state
+            isPointSizeAttenuation = !isPointSizeAttenuation;
+            
+            // Update the material
+            pointCloud.material.sizeAttenuation = isPointSizeAttenuation;
+            pointCloud.material.needsUpdate = true;
+            
+            // Update button text to reflect current state
+            this.textContent = isPointSizeAttenuation ? 
+                "Disable Size Attenuation" : "Enable Size Attenuation";
+            
+            console.log("Size attenuation:", isPointSizeAttenuation);
+            renderer.render(scene, camera);
+        });
+        
+        // Reapply filters button handler
+        document.getElementById('reapplyFiltersBtn').addEventListener('click', function() {
+            if (!pointCloud || !originalPointsData) return;
+            
+            // Get current settings
+            const zScale = parseFloat(document.getElementById('zScale').value);
+            const depthThreshold = parseFloat(document.getElementById('depthThreshold').value);
+            
+            // Create new filtered point cloud
+            const newVertices = [];
+            const newColors = [];
+            
+            // Depth range for threshold
+            let minZ = Infinity;
+            let maxZ = -Infinity;
+            
+            // Find min/max Z values in original data
+            for (let i = 2; i < originalPointsData.vertices.length; i += 3) {
+                const z = originalPointsData.vertices[i];
+                minZ = Math.min(minZ, z);
+                maxZ = Math.max(maxZ, z);
+            }
+            
+            const zRange = maxZ - minZ;
+            const actualThreshold = minZ + (depthThreshold * zRange);
+            
+            // Filter and transform points
+            for (let i = 0; i < originalPointsData.vertices.length; i += 3) {
+                const x = originalPointsData.vertices[i];
+                const y = originalPointsData.vertices[i+1];
+                const z = originalPointsData.vertices[i+2];
+                
+                // Skip points by depth threshold (filter out distant points)
+                if (z < actualThreshold) {
+                    // Add vertex with scaled Z
+                    newVertices.push(x, y, z * zScale);
+                    
+                    // Add corresponding color
+                    const colorIdx = i / 3 * 3; // Map vertex index to color index
+                    newColors.push(
+                        originalPointsData.colors[colorIdx],
+                        originalPointsData.colors[colorIdx+1],
+                        originalPointsData.colors[colorIdx+2]
+                    );
+                }
+            }
+            
+            // Update geometry
+            const geometry = pointCloud.geometry;
+            
+            // Update position attribute
+            geometry.setAttribute('position', new THREE.BufferAttribute(
+                new Float32Array(newVertices), 3
+            ));
+            
+            // Update color attribute
+            geometry.setAttribute('color', new THREE.BufferAttribute(
+                new Float32Array(newColors), 3
+            ));
+            
+            // Force update
+            geometry.attributes.position.needsUpdate = true;
+            geometry.attributes.color.needsUpdate = true;
+            
+            console.log(`Reapplied filters: ${newVertices.length/3} points (zScale=${zScale}, depthThreshold=${depthThreshold})`);
+            renderer.render(scene, camera);
+        });
+        
+        // Download model handler
+        document.getElementById('downloadModelBtn').addEventListener('click', function() {
+            if (!pointCloud) {
+                alert("No 3D model available to download");
+                return;
+            }
+            
+            try {
+                // Create a PLY format string (simple 3D format that preserves colored point clouds)
+                let plyHeader = 'ply\n';
+                plyHeader += 'format ascii 1.0\n';
+                
+                const vertices = pointCloud.geometry.attributes.position.array;
+                const colors = pointCloud.geometry.attributes.color.array;
+                const numVertices = vertices.length / 3;
+                
+                plyHeader += `element vertex ${numVertices}\n`;
+                plyHeader += 'property float x\n';
+                plyHeader += 'property float y\n';
+                plyHeader += 'property float z\n';
+                plyHeader += 'property uchar red\n';
+                plyHeader += 'property uchar green\n';
+                plyHeader += 'property uchar blue\n';
+                plyHeader += 'end_header\n';
+                
+                let plyContent = plyHeader;
+                
+                // Add vertices and colors
+                for (let i = 0; i < numVertices; i++) {
+                    const vIdx = i * 3;
+                    const cIdx = i * 3;
+                    
+                    // Add vertex coordinates
+                    plyContent += `${vertices[vIdx]} ${vertices[vIdx+1]} ${vertices[vIdx+2]} `;
+                    
+                    // Add color values (convert from 0-1 to 0-255)
+                    const r = Math.round(colors[cIdx] * 255);
+                    const g = Math.round(colors[cIdx+1] * 255);
+                    const b = Math.round(colors[cIdx+2] * 255);
+                    plyContent += `${r} ${g} ${b}\n`;
+                }
+                
+                // Create download link
+                const blob = new Blob([plyContent], {type: 'text/plain'});
+                const url = URL.createObjectURL(blob);
+                
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = 'point_cloud.ply';
+                link.click();
+                
+                URL.revokeObjectURL(url);
+                console.log("Model downloaded as PLY file");
+            } catch (error) {
+                console.error("Error downloading model:", error);
+                alert("Error downloading model: " + error.message);
+            }
+        });
+
+        // Initialize depth threshold value display
+        document.getElementById('depthThresholdValue').textContent = 
+            document.getElementById('depthThreshold').value;
     </script>
 </body>
 
