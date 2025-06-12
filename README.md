@@ -13,7 +13,7 @@ A web application that converts images to interactive 3D point clouds using MiDa
 - Visualization controls (axes, background color, camera reset)
 
 ## Live Application
-[Check out the tool here](https://vis3d-production.up.railway.app/)
+[Check out the tool here](https://vis3d.fly.dev/)
 
 ## Getting Started
 
